@@ -24,6 +24,7 @@ using namespace std;
 
 void Transform1D(const Complex* h, const int w, Complex* H);
 void TransformColumns(const Complex* in, const int w, const int h, Complex* H, const int o);
+void RowThreader(const Complex* in, const int h, const int w, const int rows, std::promise<Complex>* P, const int o);
 
 void Transform2D(const char* inputFN)
 { // Do the 2D transform here.
@@ -44,25 +45,60 @@ void Transform2D(const char* inputFN)
     Complex* data = image.GetImageData();
     int h = image.GetHeight();
     int w = image.GetWidth();
-    Complex* intermediate = new Complex[w*h];
     Complex* answer = new Complex[w*h];
 
-    std::future<Complex> intermediate[h*w];
+    if(NUMTHREADS > 1){
+        auto* promises = new std::promise<Complex>[h*w];
+        auto* futures = new std::future<Complex>[h*w];
 
-    //row calculations
-    for(int i=0;i<h;++i){
-        Transform1D(data+w*i, w, intermediate+i*w);
+        for (int i=0; i<h*w; ++i){
+            futures[i] = promises[i].get_future();
+        }
+        //assign approximately half of the threads to rows and half to columns
+        int row_threads = (NUMTHREADS/2);
+        int column_threads = NUMTHREADS - row_threads;
+
+        //find the number of rows per row thread and columns per column thread
+        int rows_per_thread = (int)floor((float)h/(float)row_threads);
+        int columns_per_thread = (int)floor((float)w/(float)column_threads);
+
+        //start row threads
+        for(int i=0; i<row_threads-1; ++i){
+            int startingRow = rows_per_thread * i;
+            std::async(std::launch::async, [] {RowThreader(data+startingRow*w,h,w,rows_per_thread,promises+startingRow*w,startingRow);});
+        }
+        //run last row thread (with modified number of rows)
+        int startingRow = rows_per_thread * (row_threads-1);
+        int rows = w - startingRow;
+        std::async(std::launch::async, [] {RowThreader(data+startingRow*w,h,w,rows,promises+startingRow*w,startingRow);});
+
+        //start column threads
+        for(int i=0; i<column_threads-1; ++i){
+            int startingColumn = columns_per_thread * i;
+            std::async(std::launch::async, [] {});
+        }
+
+
+        delete promises;
+        delete futures;
     }
+    else{
+        Complex* intermediate = new Complex[w*h];
+        //row calculations
+        for(int i=0;i<h;++i){
+            Transform1D(data+w*i, w, intermediate+i*w);
+        }
 
-    image.SaveImageData("after1d_test.txt",intermediate, w,h);
+        image.SaveImageData("after1d_test.txt",intermediate, w,h);
 
-    //column calculations
-    for(int i=0;i<w;++i){
-        TransformColumns(intermediate, w, h, answer, i);
+        //column calculations
+        for(int i=0;i<w;++i){
+            TransformColumns(intermediate, w, h, answer, i);
+        }
+
+        delete intermediate;
     }
-
     image.SaveImageData("after2d_test.txt",answer,w,h);
-    delete intermediate;
     delete answer;
 }
 
@@ -89,12 +125,33 @@ void TransformColumns(const Complex* in, const int w, const int h, Complex* H, c
     }
 }
 
+void RowThreader(const Complex* in, const int h, const int w, const int rows, std::promise<Complex>* P, const int o){
+    Complex temp;
+    for(int i=0; i<rows; ++i){
+        for(int n=0; n<w; ++n) {
+            for (int k=0; k < w; ++k){
+               temp = temp + in[w*o+k]* Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
+            }
+            P[w*o+n].set_value(temp);
+        }
+    }
+}
+void ColumnThreader(std::future<Complex>* in, const int h, const int w, const int o, const int columns, Complex* out){
+    for(int i=0; i<columns; ++i){
+        for(int n=0; n<h; ++n){
+            for (int k=0; k<h; ++k){
+                out[w*n+o] = out[w*n+o] + in[w*k+o].get()*Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
     string fn("../Tower.txt"); // default file name
     if (argc > 1) fn = string(argv[1]);  // if name specified on cmd line
     Transform2D(fn.c_str()); // Perform the transform.
-}  
-  
+}
 
-  
+
+
