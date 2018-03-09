@@ -45,6 +45,9 @@ void Transform2D(const char* inputFN)
     Complex* data = image.GetImageData();
     int h = image.GetHeight();
     int w = image.GetWidth();
+    std::cout << "Rows: " << h << std::endl;
+    std::cout << "Columns: " << w << std::endl;
+
     Complex* answer = new Complex[w*h];
     Complex (&data2)[h][w] = *reinterpret_cast<Complex (*)[h][w]>(image.GetImageData());
 
@@ -58,31 +61,41 @@ void Transform2D(const char* inputFN)
         //assign a proportional amount of threads to rows and columns
         int row_threads = (NUMTHREADS*h)/(h+w);
         int column_threads = NUMTHREADS - row_threads;
+        std::cout << "Row Threads: " << row_threads << std::endl;
+        std::cout << "Column Threads: " << column_threads << std::endl;
 
         //find the number of rows per row thread and columns per column thread
         int rows_per_thread = (h+row_threads-1)/row_threads; // equivalent to ceil(h / row_threads) thanks to integer truncation
         int columns_per_thread = (w+column_threads-1)/column_threads;
+        std::cout << "Rows per Thread: " << rows_per_thread << std::endl;
+        std::cout << "Columns per Thread: " << columns_per_thread << std::endl;
 
         //find the number of rows/columns that the final thread will have to process
         int rows_last_thread = h - (row_threads - 1) * rows_per_thread;
         int columns_last_thread = w - (column_threads - 1) * rows_per_thread;
+        std::cout << "Rows last Thread: " << rows_last_thread << std::endl;
+        std::cout << "Columns last Thread " << columns_last_thread << std::endl;
 
         //start row threads
         for(int i=0; i<row_threads-1; ++i){
             int startingRow = rows_per_thread * i;
+            std::cout << "Starting thread for rows " << startingRow << " - " << startingRow+rows_per_thread << std::endl;
             std::async(std::launch::async, [&] {RowThreader(data,h,w,rows_per_thread,startingRow,promises);});
         }
         //run last row thread (with modified number of rows)
         int startingRow = rows_per_thread * (row_threads-1);
+        std::cout << "Starting thread for rows " << startingRow << " - " << startingRow + rows_last_thread << std::endl;
         std::async(std::launch::async, [&] {RowThreader(data,h,w,rows_last_thread,startingRow,promises);});
 
         //start column threads
         for(int i=0; i<column_threads-1; ++i){
             int startingColumn = columns_per_thread * i;
+            std::cout << "Starting thread for columns " << startingColumn << " - " << startingColumn+columns_per_thread << std::endl;
             std::async(std::launch::async, [&] {ColumnThreader(futures,h,w,startingColumn,columns_per_thread,answer);});
         }
         //run last column thread (with modified number of columns)
         int startingColumn = columns_per_thread * (column_threads-1);
+        std::cout << "Starting thread for columns " << startingColumn << " - " << startingColumn + columns_last_thread << std::endl;
         std::async(std::launch::async, [&] {ColumnThreader(futures,h,w,startingColumn,columns_last_thread,answer);});
 
 
@@ -133,7 +146,7 @@ void TransformColumns(const Complex* in, const int w, const int h, Complex* H, c
 
 void RowThreader(const Complex* in, const int h, const int w, const int o, const int rows, std::promise<Complex>* P){
     for(int i=0; i<rows; ++i){
-        int rowIndex = w*o;
+        int rowIndex = w*(o+i);
         for(int n=0; n<w; ++n) {
             Complex temp(0);
             for (int k=0; k < w; ++k){
@@ -141,6 +154,7 @@ void RowThreader(const Complex* in, const int h, const int w, const int o, const
             }
             P[rowIndex+n].set_value(temp);
         }
+        std::cout << "Finished row " << o+i << std::endl;
     }
 }
 void ColumnThreader(std::future<Complex>* in, const int h, const int w, const int o, const int columns, Complex* out){
@@ -148,15 +162,16 @@ void ColumnThreader(std::future<Complex>* in, const int h, const int w, const in
         //preload column from futures
         Complex column[h];
         for(int f=0; f<h; ++f){
-            column[f] = in[w*f+o].get();
+            column[f] = in[w*f+(o+i)].get();
         }
         for(int n=0; n<h; ++n){
             Complex temp(0);
             for (int k=0; k<h; ++k){
                  temp = temp + column[k]*Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
             }
-            out[w*n+o] = temp;
+            out[w*n+(o+i)] = temp;
         }
+        std::cout << "Finished column" << o+i << std::endl;
     }
 }
 
