@@ -24,8 +24,8 @@ using namespace std;
 
 void Transform1D(const Complex* h, const int w, Complex* H);
 void TransformColumns(const Complex* in, const int w, const int h, Complex* H, const int o);
-void RowThreader(const Complex* in, const int h, const int w, const int rows, std::promise<Complex>* P, const int o);
-
+void RowThreader(const Complex* in, const int h, const int w, const int o, const int rows, std::promise<Complex>* P);
+void ColumnThreader(std::future<Complex>* in, const int h, const int w, const int o, const int columns, Complex* out);
 void Transform2D(const char* inputFN)
 { // Do the 2D transform here.
     // 1) Use the InputImage object to read in the Tower.txt file and
@@ -46,6 +46,7 @@ void Transform2D(const char* inputFN)
     int h = image.GetHeight();
     int w = image.GetWidth();
     Complex* answer = new Complex[w*h];
+    Complex (&data2)[h][w] = *reinterpret_cast<Complex (*)[h][w]>(image.GetImageData());
 
     if(NUMTHREADS > 1){
         auto* promises = new std::promise<Complex>[h*w];
@@ -54,33 +55,39 @@ void Transform2D(const char* inputFN)
         for (int i=0; i<h*w; ++i){
             futures[i] = promises[i].get_future();
         }
-        //assign approximately half of the threads to rows and half to columns
-        int row_threads = (NUMTHREADS/2);
+        //assign a proportional amount of threads to rows and columns
+        int row_threads = (NUMTHREADS*h)/(h+w);
         int column_threads = NUMTHREADS - row_threads;
 
         //find the number of rows per row thread and columns per column thread
-        int rows_per_thread = (int)floor((float)h/(float)row_threads);
-        int columns_per_thread = (int)floor((float)w/(float)column_threads);
+        int rows_per_thread = (h+row_threads-1)/row_threads; // equivalent to ceil(h / row_threads) thanks to integer truncation
+        int columns_per_thread = (w+column_threads-1)/column_threads;
+
+        //find the number of rows/columns that the final thread will have to process
+        int rows_last_thread = h - (row_threads - 1) * rows_per_thread;
+        int columns_last_thread = w - (column_threads - 1) * rows_per_thread;
 
         //start row threads
         for(int i=0; i<row_threads-1; ++i){
             int startingRow = rows_per_thread * i;
-            std::async(std::launch::async, [] {RowThreader(data+startingRow*w,h,w,rows_per_thread,promises+startingRow*w,startingRow);});
+            std::async(std::launch::async, [&] {RowThreader(data,h,w,rows_per_thread,startingRow,promises);});
         }
         //run last row thread (with modified number of rows)
         int startingRow = rows_per_thread * (row_threads-1);
-        int rows = w - startingRow;
-        std::async(std::launch::async, [] {RowThreader(data+startingRow*w,h,w,rows,promises+startingRow*w,startingRow);});
+        std::async(std::launch::async, [&] {RowThreader(data,h,w,rows_last_thread,startingRow,promises);});
 
         //start column threads
         for(int i=0; i<column_threads-1; ++i){
             int startingColumn = columns_per_thread * i;
-            std::async(std::launch::async, [] {});
+            std::async(std::launch::async, [&] {ColumnThreader(futures,h,w,startingColumn,columns_per_thread,answer);});
         }
+        //run last column thread (with modified number of columns)
+        int startingColumn = columns_per_thread * (column_threads-1);
+        std::async(std::launch::async, [&] {ColumnThreader(futures,h,w,startingColumn,columns_last_thread,answer);});
 
 
-        delete promises;
-        delete futures;
+        //delete promises; //welcome to memory leak station, population: this code
+        //delete futures;
     }
     else{
         Complex* intermediate = new Complex[w*h];
@@ -107,7 +114,6 @@ void Transform1D(const Complex* h, const int w, Complex* H)
     // Implement a simple 1-d DFT using the double summation equation
     // given in the assignment handout.  h is the time-domain input
     // data, w is the width (N), and H is the output array.
-    // TODO: fancy threading support?
     for(int n=0; n<w; ++n) {
         for (int k = 0; k < w; ++k) {
             H[n]=H[n]+h[k]*Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
@@ -125,23 +131,31 @@ void TransformColumns(const Complex* in, const int w, const int h, Complex* H, c
     }
 }
 
-void RowThreader(const Complex* in, const int h, const int w, const int rows, std::promise<Complex>* P, const int o){
-    Complex temp;
+void RowThreader(const Complex* in, const int h, const int w, const int o, const int rows, std::promise<Complex>* P){
     for(int i=0; i<rows; ++i){
+        int rowIndex = w*o;
         for(int n=0; n<w; ++n) {
+            Complex temp(0);
             for (int k=0; k < w; ++k){
-               temp = temp + in[w*o+k]* Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
+               temp = temp + in[rowIndex+k]* Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
             }
-            P[w*o+n].set_value(temp);
+            P[rowIndex+n].set_value(temp);
         }
     }
 }
 void ColumnThreader(std::future<Complex>* in, const int h, const int w, const int o, const int columns, Complex* out){
     for(int i=0; i<columns; ++i){
+        //preload column from futures
+        Complex column[h];
+        for(int f=0; f<h; ++f){
+            column[f] = in[w*f+o].get();
+        }
         for(int n=0; n<h; ++n){
+            Complex temp(0);
             for (int k=0; k<h; ++k){
-                out[w*n+o] = out[w*n+o] + in[w*k+o].get()*Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
+                 temp = temp + column[k]*Complex(cos(2 * PI * k * n / w), -sin(2 * PI * k * n / w));
             }
+            out[w*n+o] = temp;
         }
     }
 }
