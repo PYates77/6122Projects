@@ -75,32 +75,35 @@ void Transform2D(const char* inputFN)
         int columns_last_thread = w - (column_threads - 1) * rows_per_thread;
         std::cout << "Rows last Thread: " << rows_last_thread << std::endl;
         std::cout << "Columns last Thread " << columns_last_thread << std::endl;
-
+        std::vector<std::future<void>> futs;
         //start row threads
         for(int i=0; i<row_threads-1; i++){
             int startingRow = rows_per_thread * i;
             std::cout << "Starting thread for rows " << startingRow << " - " << startingRow+rows_per_thread << std::endl;
-            std::async(std::launch::async, [&] {RowThreader(data,h,w,startingRow,rows_per_thread,promises);});
+            futs.push_back(std::async(RowThreader,data,h,w,startingRow,rows_per_thread,promises));
         }
         //run last row thread (with modified number of rows)
         int startingRow = rows_per_thread * (row_threads-1);
         std::cout << "Starting thread for rows " << startingRow << " - " << startingRow + rows_last_thread << std::endl;
-        std::async(std::launch::async, [&] {RowThreader(data,h,w,startingRow,rows_last_thread,promises);});
+        futs.push_back(std::async(RowThreader,data,h,w,startingRow,rows_last_thread,promises));
 
         //start column threads
         for(int i=0; i<column_threads-1; ++i){
             int startingColumn = columns_per_thread * i;
             std::cout << "Starting thread for columns " << startingColumn << " - " << startingColumn+columns_per_thread << std::endl;
-            std::async(std::launch::async, [&] {ColumnThreader(futures,h,w,startingColumn,columns_per_thread,answer);});
+            futs.push_back(std::async(ColumnThreader,futures,h,w,startingColumn,columns_per_thread,answer));
         }
         //run last column thread (with modified number of columns)
         int startingColumn = columns_per_thread * (column_threads-1);
         std::cout << "Starting thread for columns " << startingColumn << " - " << startingColumn + columns_last_thread << std::endl;
-        std::async(std::launch::async, [&] {ColumnThreader(futures,h,w,startingColumn,columns_last_thread,answer);});
+        futs.push_back(std::async(ColumnThreader,futures,h,w,startingColumn,columns_last_thread,answer));
 
-
-        //delete promises; //welcome to memory leak station, population: this code
-        //delete futures;
+        //wait for threads to finish before clearing allocated memory
+        for(auto it = futs.begin(); it != futs.end(); ++it){
+            it->get();
+        }
+        delete promises;
+        delete futures;
     }
     else{
         Complex* intermediate = new Complex[w*h];
