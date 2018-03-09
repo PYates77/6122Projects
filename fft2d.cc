@@ -77,15 +77,15 @@ void Transform2D(const char* inputFN)
         std::cout << "Columns last Thread " << columns_last_thread << std::endl;
 
         //start row threads
-        for(int i=0; i<row_threads-1; ++i){
+        for(int i=0; i<row_threads-1; i++){
             int startingRow = rows_per_thread * i;
             std::cout << "Starting thread for rows " << startingRow << " - " << startingRow+rows_per_thread << std::endl;
-            std::async(std::launch::async, [&] {RowThreader(data,h,w,rows_per_thread,startingRow,promises);});
+            std::async(std::launch::async, [&] {RowThreader(data,h,w,startingRow,rows_per_thread,promises);});
         }
         //run last row thread (with modified number of rows)
         int startingRow = rows_per_thread * (row_threads-1);
         std::cout << "Starting thread for rows " << startingRow << " - " << startingRow + rows_last_thread << std::endl;
-        std::async(std::launch::async, [&] {RowThreader(data,h,w,rows_last_thread,startingRow,promises);});
+        std::async(std::launch::async, [&] {RowThreader(data,h,w,startingRow,rows_last_thread,promises);});
 
         //start column threads
         for(int i=0; i<column_threads-1; ++i){
@@ -154,7 +154,6 @@ void RowThreader(const Complex* in, const int h, const int w, const int o, const
             }
             P[rowIndex+n].set_value(temp);
         }
-        std::cout << "Finished row " << o+i << std::endl;
     }
 }
 void ColumnThreader(std::future<Complex>* in, const int h, const int w, const int o, const int columns, Complex* out){
@@ -171,7 +170,6 @@ void ColumnThreader(std::future<Complex>* in, const int h, const int w, const in
             }
             out[w*n+(o+i)] = temp;
         }
-        std::cout << "Finished column" << o+i << std::endl;
     }
 }
 

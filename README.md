@@ -10,4 +10,3 @@ after2d.txt shows the correct final output for Tower.txt.
 2D DFT is performed by doing a 1D DFT on each row of the array, then a 1D DFT on each column of the modified array.
 See DFT formula here: https://en.wikipedia.org/wiki/Discrete_Fourier_transform
 
-Single threading functionality currently works as intended (set NUMTHREADS to 1), multithreading is bugged. 
